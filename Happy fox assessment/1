@@ -1,0 +1,105 @@
+import os
+import pickle
+import base64
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request
+
+
+# Define your rule-based operations here
+def process_email(email):
+    # Example rule: Archive emails from a specific sender
+    if email['sender'] == 'example@example.com':
+        archive_email(email['id'])
+
+
+# Archive an email
+def archive_email(email_id):
+    try:
+        service.users().messages().modify(
+            userId='me',
+            id=email_id,
+            body={'removeLabelIds': ['INBOX']}
+        ).execute()
+        print(f"Archived email with ID: {email_id}")
+    except HttpError as error:
+        print(f"An error occurred while archiving email with ID {email_id}: {error}")
+
+
+# Get Gmail API credentials
+def get_credentials():
+    creds = None
+    token_path = 'token.pickle'
+    creds_path = 'credentials.json'
+    scopes = ['https://www.googleapis.com/auth/gmail.modify']
+
+    if os.path.exists(token_path):
+        with open(token_path, 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                creds_path, scopes)
+            creds = flow.run_local_server(port=0)
+        with open(token_path, 'wb') as token:
+            pickle.dump(creds, token)
+
+    return creds
+
+
+# Connect to Gmail API
+def connect_to_gmail():
+    creds = get_credentials()
+    service = build('gmail', 'v1', credentials=creds)
+    return service
+
+
+# Retrieve emails from Gmail API
+def retrieve_emails(service, query):
+    try:
+        results = service.users().messages().list(
+            userId='me',
+            q=query
+        ).execute()
+        emails = results.get('messages', [])
+        if not emails:
+            print('No matching emails found.')
+        else:
+            for email in emails:
+                msg = service.users().messages().get(
+                    userId='me',
+                    id=email['id']
+                ).execute()
+                process_email(parse_email(msg))
+    except HttpError as error:
+        print(f'An error occurred while retrieving emails: {error}')
+
+
+# Parse email data
+def parse_email(email):
+    msg_data = {}
+    headers = email['payload']['headers']
+    for header in headers:
+        name = header['name']
+        value = header['value']
+        if name.lower() == 'from':
+            msg_data['sender'] = value
+        elif name.lower() == 'subject':
+            msg_data['subject'] = value
+    msg_data['id'] = email['id']
+    return msg_data
+
+
+if __name__ == '__main__':
+    # Set up Gmail API connection
+    service = connect_to_gmail()
+
+    # Define the search query for retrieving emails
+    query = 'is:unread'  # Example: retrieve all unread emails
+
+    # Retrieve and process emails
+    retrieve_emails(service, query)
